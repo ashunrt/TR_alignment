@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en" ng-app="imageSplitterApp">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Splitter with Coordinate Saving</title>
+  <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
+    #preview-container { display: flex; justify-content: center; gap: 10px; margin-top: 20px; }
+    .split-container { 
+      position: relative; 
+      /* The container’s width/height will be set dynamically in JS */
+      margin: auto;
+      border: 2px solid #000;
+    }
+    /* Remove any fixed width/height from the image itself */
+    .split {
+      width: 100%; 
+      height: 100%; 
+      object-fit: contain;
+      display: block;
+      cursor: crosshair;
+    }
+    button { margin: 10px; padding: 10px 15px; font-size: 16px; }
+    .point {
+      width: 10px; height: 10px; background: red;
+      position: absolute; border-radius: 50%;
+      transform: translate(-50%, -50%);
+    }
+    .loader {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 20px; color: #007bff; font-weight: bold;
+    }
+    .main-div{
+      display: flex;
+      justify-content: center;
+      margin: 5px;
+      padding: 5px;
+    }
+    input[type="file"] {
+      width: 200px;
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+  </style>
+</head>
+<body ng-controller="ImageController">
+  <h2>TR Image</h2>
+  <form name="trform">
+ <div class="main-div">
+    <div class="dive0">
+      <input type="file" id="folderInput" webkitdirectory directory multiple accept="image/*"><br><br>
+    </div>
+     <div class="dive1" >
+      <button id="chosfold" ng-click="chooseFolder()" ng-disabled="chosefoldr">Choose Folder</button>   
+    </div>
+    <div class="dive2">
+      <button ng-click="submit()" ng-disabled="showImg">Show Image</button>
+    </div>
+    <div class="dive3">
+      <button ng-click="save()" ng-disabled="processImg">Process data</button>
+    </div>
+   <div>
+    <!-- <button id="chosfold" ng-click="chooseFolder()" ng-disabled="chosefoldr">Choose Folder</button>    -->
+   </div>
+  </div>
+<div>
+  <!-- <button ng-click="prev()" ng-disabled="prevDisabled">Previous</button> -->
+  <!-- <button ng-click="submit()" ng-disabled="showImg">Show Image</button>-->
+  <!--<button ng-click="save()" ng-disabled="processImg">Process data</button> -->
+  <!-- <button ng-click="undo()" ng-disabled="undoDisabled">Undo</button> -->
+  <!-- <button ng-click="next()" ng-disabled="nextDisabled">Next</button> -->
+ <!-- <button ng-click="downloadImage()" ng-disabled="sveImage">Save Images</button> -->
+</div>
+<!-- <div class="restricted-icon" ng-show="showRestricted"></div> -->
+<div class="image-name">{{currentFileName}}</div>
+<div ng-if="imageFiles.length">{{currentIndex+1}}/{{imageFiles.length}}</div>
+  <div id="preview-container">    
+    <div id="split-container" class="split-container" ng-click="addPoint($event)">
+      <img id="left-part"  class="split" ng-src="{{imageSrc}}" alt="Image" ng-show="!loading" >      
+      <div class="loader" ng-show="loading">Loading...</div>
+      <div class="point" ng-repeat="point in points"
+           ng-style="{'left': point.clickX + 'px', 'top': point.clickY + 'px'}"></div>
+    </div>
+  </div>
+
+  <div>
+    <button ng-click="prev()" ng-disabled="prevDisabled">Previous</button>
+     <button ng-click="undo()" ng-disabled="undoDisabled">Undo</button> 
+    <button ng-click="next()" ng-disabled="nextDisabled">Next</button>
+  </div>
+</form>
+
+  <script>
+    var app = angular.module('imageSplitterApp', []);
+     app.controller("ImageController", function($scope, $http) {
+    //  app.controller('ImageController', ['$scope', function($scope, $http, $rootScope, $timeout) {
+      $scope.imageFiles = [];
+      $scope.currentIndex = 0;
+      $scope.pointsData = {};
+      $scope.imageSrc = "";
+      $scope.points = [];
+      $scope.undoStack = [];
+      $scope.loading = false;
+      $scope.originalWidth = 0;
+      $scope.originalHeight = 0;
+      $scope.displayScale = 0.2;  // container is 20% of the original image size
+      $scope.inverseScale = 1 / $scope.displayScale;  // should be 5
+      $scope.year="";
+      $scope.trType="";
+      $scope.sveImage=true;
+      $scope.processImg=true;
+      $scope.showImg=false;
+      $scope.chosefoldr=false;
+      $scope.nextDisabled=true;
+      $scope.undoDisabled=true;
+      $scope.prevDisabled=true;
+      var fileName;
+
+
+      $scope.submit = function() {
+        // $scope.trType = document.getElementById("trType").value;
+        // $scope.year = document.getElementById("year").value;
+        var files = document.getElementById('folderInput').files;
+        if (files.length === 0) {
+          alert("Please select an image folder,Year and Tr Type");
+          return;
+        }
+        $scope.imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
+        console.log(" $scope.imageFiles length", $scope.imageFiles.length);
+        
+        if ($scope.imageFiles.length === 0) {
+          alert("No images found in the selected folder.");
+          return;
+        }
+        $scope.currentIndex = 0;
+        $scope.displayImage($scope.imageFiles[$scope.currentIndex]);
+        $scope.processImg=false;
+        $scope.updateButtons();
+      };
+
+      $scope.displayImage = function(file) {
+        $scope.loading = true;
+        var reader = new FileReader();
+        reader.onload = function(event) {
+          var img = new Image();
+          img.src = event.target.result;
+          img.onload = function() {
+            // Store original dimensions
+            $scope.originalWidth = img.width;
+            $scope.originalHeight = img.height;
+
+            // Set the image container's size to 20% of original image dimensions:
+            var container = document.getElementById('split-container');
+            var containerWidth = Math.round($scope.originalWidth * $scope.displayScale);
+            var containerHeight = Math.round($scope.originalHeight * $scope.displayScale);
+            container.style.width = containerWidth + 'px';
+            container.style.height = containerHeight + 'px';
+
+            // Create a canvas to capture the full image data (we will still show a scaled version)
+            var canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, img.width, img.height);
+
+
+            $scope.base64Data=null;
+            $scope.$apply(function() {
+              $scope.imageSrc = canvas.toDataURL();
+              $scope.base64Data = $scope.imageSrc.split(",")[1];
+
+              
+              $scope.currentFileName = file.name;
+               fileName = file.name.replace(/\.[^/.]+$/, '');
+              if (!$scope.pointsData[fileName]) {
+                $scope.pointsData[fileName] = { 
+                  left: [],
+                  displayScale: $scope.displayScale,
+                  inverseScale: $scope.inverseScale
+                };
+              }
+              $scope.points = [];
+              $scope.undoStack = [];
+              $scope.loading = false;
+            });
+          };
+        };
+        reader.readAsDataURL(file);
+      };
+
+
+      // $scope.addPoint = function(event) {
+      //   var clickX = event.offsetX;
+      //   var clickY = event.offsetY;       
+      //    fileName = $scope.imageFiles[$scope.currentIndex].name.replace(/\.[^/.]+$/, '');
+      //   if ($scope.pointsData[fileName].left.length >= 6) return;  
+
+      //   // Save the point along with the display scale factor.
+      //   var pointData = {
+      //     clickX: clickX,
+      //     clickY: clickY
+      //   };       
+      //   $scope.pointsData[fileName].left.push(pointData);
+      //   $scope.points.push(pointData);
+      //   $scope.undoStack.push(pointData);
+      //   $scope.updateButtons();
+      // };
+
+
+    $scope.addPoint = function(event) {
+    var clickX = event.offsetX;
+    var clickY = event.offsetY;       
+    fileName = $scope.imageFiles[$scope.currentIndex].name.replace(/\.[^/.]+$/, '');
+
+    if ($scope.pointsData[fileName].left.length >= 6) {
+        // Clear the stored points after processing
+        $scope.pointsData[fileName].left = [];
+        return;
+    }
+
+    // Save the point along with the display scale factor.
+    var pointData = {
+        clickX: clickX,
+        clickY: clickY
+    };       
+    $scope.pointsData[fileName].left.push(pointData);
+    $scope.points.push(pointData);
+    $scope.undoStack.push(pointData);
+    $scope.updateButtons();
+};
+
+
+      $scope.undo = function() {
+        if ($scope.undoStack.length === 0) return;
+         fileName = $scope.imageFiles[$scope.currentIndex].name.replace(/\.[^/.]+$/, '');
+        $scope.undoStack.pop();
+        $scope.pointsData[fileName].left.pop();
+        $scope.points.pop();
+        $scope.updateButtons();
+      };
+
+
+      $scope.next = function() {
+        if ($scope.currentIndex < $scope.imageFiles.length - 1) {
+          $scope.currentIndex++;
+          $scope.displayImage($scope.imageFiles[$scope.currentIndex]);
+        }
+        $scope.sveImage=true;
+        $scope.updateButtons();
+      };
+
+      $scope.prev = function() {
+        if ($scope.currentIndex > 0) {
+          $scope.currentIndex--;
+          $scope.displayImage($scope.imageFiles[$scope.currentIndex]);
+        }
+        $scope.sveImage=true;
+        $scope.updateButtons();
+      };
+
+      $scope.updateButtons = function() {
+        $scope.prevDisabled = $scope.currentIndex === 0;
+        $scope.nextDisabled = $scope.currentIndex === $scope.imageFiles.length - 1;
+        $scope.saveDisabled = $scope.imageFiles.length === 0;
+        $scope.undoDisabled = $scope.undoStack.length === 0;
+      };
+
+
+    angular.element(document).ready(function () {
+    var fileInput = document.getElementById('left-part');
+    if (fileInput) {
+        fileInput.addEventListener('change', function (event) {
+            var file = event.target.files[0];
+            if (file) {
+                $scope.saveImageAsBase64(file);
+                $scope.$apply(); // Ensure Angular updates the view
+            }
+        });
+    }
+});
+
+
+
+
+$scope.save = async function () {
+  //  $scope.loading = true;
+    try {
+        // Ensure a folder is selected
+        if (!$scope.selectedDirHandle) {
+            alert("Please select a folder first.");
+            return;
+        }
+
+        const fileName = $scope.imageFiles[$scope.currentIndex].name.replace(/\.[^/.]+$/, '');
+        
+        if (!$scope.pointsData[fileName]) {
+            alert("Coordinates data not available for this image.");
+            return;
+        }
+
+        const dataToSave = {
+            image: $scope.pointsData[fileName].left
+        };
+
+        // console.log("Saving image data:", dataToSave.image);
+
+        // Create a file handle in the selected directory
+        const fileHandle = await $scope.selectedDirHandle.getFileHandle(`${fileName}.json`, { create: true });
+
+        // Create a writable stream
+        const writableStream = await fileHandle.createWritable();
+
+        // Write JSON data to the file
+        await writableStream.write(JSON.stringify(dataToSave, null, 2));
+        // Close the stream
+        await writableStream.close();
+        $scope.points = [];
+        // $scope.loading = false;
+        $scope.next();
+        $scope.showImg = true;
+       alert("Data saved successfully!");
+    } catch (error) {
+        console.error("Error saving file:", error);
+        alert("Failed to save data. Please check browser permissions.");
+    }
+};
+
+$scope.selectedDirHandle = null;
+
+// Function to ask user for folder selection
+$scope.chooseFolder = async function () {
+    try {
+        $scope.selectedDirHandle = await window.showDirectoryPicker();
+        console.log("Selected folder:", $scope.selectedDirHandle);
+        alert("Folder selected successfully!");
+    } catch (error) {
+        console.error("Error selecting folder:", error);
+    }
+};
+
+$scope.clearPointsData = function () {
+    const fileName = $scope.imageFiles[$scope.currentIndex].name.replace(/\.[^/.]+$/, '');
+    if ($scope.pointsData[fileName]) {
+        $scope.pointsData[fileName] = { left: [], right: [] };
+    }
+};
+
+
+
+
+    });
+  </script>
+</body>
+</html>
